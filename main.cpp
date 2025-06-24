@@ -540,7 +540,7 @@ struct Story {
 
 #pragma region "システムとプレイヤー設定"
 struct SystemSetting {
-    int targetFPS = 25;
+    int targetFPS = 20;
     double frameDurationMS = 1000 / targetFPS;
     int consoleWidth = CONSOLE_WIDTH;
     int consoleHeight = CONSOLE_HEIGHT;
@@ -562,8 +562,6 @@ struct SystemVariable {
 
 struct PlayerSetting {
     int crosshairSpeed = 2;
-    bool gunEnabled = true;
-    bool bulletsEnabled = false;
 };
 
 struct GameSetting {
@@ -631,6 +629,7 @@ void CmdGameFinalize(EngineContext& ec) {
 
 /********* Game *************/
 #pragma region "Object"
+//****************************Gun****************************//
 enum GunType {
     LASER = 0,
     RAILGUN = 1,
@@ -657,7 +656,7 @@ struct Gun {
     CrosshairAA crosshairAA; // クロスヘアのスプライト
     GunSetting setting; // 銃の設定
 };
-
+//****************************Player****************************//
 struct PlayerGUI {    // プレイヤーのGUI設定
     Point hpPosi; // HP表示位置
     Point scorePosi; // スコア表示位置
@@ -670,15 +669,25 @@ struct Player {
     Gun gun;
     int hp;
     int score;
+    int hitCount = 0; // ヒット数
     bool isShooting = false; // 銃を撃っているかどうか
     int ammo; // 弾薬数
 };
 
 struct HandlerContext {
     Player* player;
+    GameSetting* setting; // ゲーム設定
 };
-
-
+//****************************UFO****************************//
+struct Enemy {
+    Point position; // 敵の位置
+    UFOenemyAA sprite; // UFOのスプライト
+    int hp; // 敵のHP
+    int direction;
+    int score; // 倒したときのスコア
+    bool isAlive = true; // 生存状態
+    int moveSpeed = 1; // 移動速度
+};
 
 #pragma endregion
 
@@ -768,7 +777,8 @@ void UpKeyEvent(HandlerContext* context);
 void DownKeyEvent(HandlerContext* context);
 void LeftKeyEvent(HandlerContext* context);
 void RightKeyEvent(HandlerContext* context);
-void ShotEvent(HandlerContext* context);
+void ShootEvent(HandlerContext* context);
+void SwitchGunEvent(HandlerContext* context);
 
 void RegisterKeyboardEvent(HandlerContext context);
 
@@ -800,16 +810,14 @@ Player* InitPlayer(EngineContext ec) {
     player->gun.crX = (int)ec.setting.sys.screenWidth / 2;
     player->gun.crY = (int)ec.setting.sys.screenHeight / 3;
     player->gun.type = LASER;
-    double theta = atan2(player->gun.setting.middleAnchor.y - player->gun.crY, player->gun.setting.middleAnchor.x - player->gun.crX);
-    player->gun.setting.xGunOffset = -floor(cos(theta) * GUN_LENGTH); // 初期オフセット
-    player->gun.setting.yGunOffset = -floor(sin(theta) * GUN_LENGTH); // 初期オフセット
-    player->gun.setting.gunTopOffset = {
-        (int)(player->gun.setting.xGunOffset * player->gun.setting.gunXStretch),
-        player->gun.setting.yGunOffset
-    };
+    
+    player->setting = &ec.setting.pr; // PlayerSettingを設定
     return player;
 }
 
+void GunAction(Player* player, EngineContext& ec);
+
+void ShootBulletAction(Player* player, EngineContext& ec);
 
 #pragma endregion
 
@@ -872,13 +880,12 @@ Enviroment
 
 int main() {
     EngineContext* ec = CmdGameInitialize(author, CONSOLE_WIDTH, CONSOLE_HEIGHT);
-    GameSetting* gs;
-    gs = &ec->setting;
     ConsoleCursorVisible(false);
 
     Player* player = InitPlayer(*ec);
     HandlerContext context;
     context.player = player;
+    context.setting = &ec->setting;
 
     SpaceshipAA spaceship;
     CityAA city;
@@ -897,6 +904,9 @@ int main() {
 
         // Keyboardイベントを実行
         RunKeyboardEvent(context);
+
+
+        // Actionを実行
 
         int animeframe = ec->setting.val.frame % 20 / 5;
 
@@ -920,8 +930,18 @@ int main() {
         
             WirteGunSprites(*player, *ec);
             WirteGUI(*player, *ec);
+
+            WriteToBuffer(ec->setting.sys.screenWidth - ec->setting.val.playerUiOffsetX + 8, ec->setting.sys.groundHeight , GUN_NAME[player->gun.type], *ec);
+            WriteToBuffer(ec->setting.sys.screenWidth - ec->setting.val.playerUiOffsetX + 8, ec->setting.sys.groundHeight + 3, to_string(player->score), *ec);
             DrawToScreen(*ec);
+
             
+            
+        }
+        // Actionを実行する
+        {
+            GunAction(player, *ec);
+            ShootBulletAction(player, *ec);
         }
 
         // Test
@@ -935,13 +955,11 @@ int main() {
             DrawToScreenWithColour(50, 6, GREEN, ue.leftSprites[animeframe], *ec);
             DrawToScreenWithColour(50, 12, YELLOW, ubs.sprites, *ec);
 
+            // User Interfaceを描画する
             int x = ec->setting.sys.screenWidth - ec->setting.val.playerUiOffsetX + 9;
-            int y = ec->setting.sys.groundHeight + 1;
-
-            DrawToScreenWithColour(x, y++, WHITE, GUN_NAME[player->gun.type], *ec);
+            int y = ec->setting.sys.groundHeight + 2;
+            DrawToScreenWithColour(x, y++, RED, "❚❚❚❚❚❚❚", *ec);
             DrawToScreenWithColour(x, y++, MAGENTA, "❚❚❚❚❚❚❚", *ec);
-            DrawToScreenWithColour(x, y++, RED, "❚❚❚❚❚❚❚", *ec);
-            DrawToScreenWithColour(x, y++, RED, "❚❚❚❚❚❚❚", *ec);
         }
         
         // Draw Crosshair
@@ -962,8 +980,8 @@ void RegisterKeyboardEvent(HandlerContext hc) {
     RegisterKeyboardEventHandler(LEFT, A_KEY, LeftKeyEvent);
     RegisterKeyboardEventHandler(RIGHT, D_KEY, RightKeyEvent);
     // space ascii code
-    RegisterKeyboardEventHandler(SHOT, J_KEY, ShotEvent);
-    RegisterKeyboardEventHandler(TAB, K_KEY, ShotEvent);
+    RegisterKeyboardEventHandler(SHOT, J_KEY, ShootEvent);
+    RegisterKeyboardEventHandler(TAB, K_KEY, SwitchGunEvent);
 }
 
 void RunKeyboardEvent(HandlerContext hc) {
@@ -973,7 +991,25 @@ void RunKeyboardEvent(HandlerContext hc) {
     }
 }
 
-string SpritesEnviromentBorder(EngineContext ec) {  
+void ShootBulletAction(Player* player, EngineContext& ec) {
+    if (player->isShooting && player->ammo > 0) {
+        
+        player->ammo--;
+    }
+    player->isShooting = false; // 銃を撃った後は、撃っていない状態に戻す
+}
+
+void GunAction(Player* player, EngineContext& ec) {
+    double theta = atan2(player->gun.setting.middleAnchor.y - player->gun.crY, player->gun.setting.middleAnchor.x - player->gun.crX);
+    player->gun.setting.xGunOffset = -floor(cos(theta) * GUN_LENGTH); // 初期オフセット
+    player->gun.setting.yGunOffset = -floor(sin(theta) * GUN_LENGTH); // 初期オフセット
+    player->gun.setting.gunTopOffset = {
+        (int)(player->gun.setting.xGunOffset * player->gun.setting.gunXStretch),
+        player->gun.setting.yGunOffset
+    };
+}
+
+string SpritesEnviromentBorder(EngineContext ec) {
     // Allocate strings on the heap instead of the stack  
     string* topBorder = new string("╔" + JoinCopyStr(ec.setting.sys.spriteMaxWidth, "═") + "╗" + string(1, NEWLINE));  
     string* middleBorder = new string("║" + JoinCopyStr(ec.setting.sys.spriteMaxWidth, " ") + "║" + string(1, NEWLINE));  
@@ -1156,17 +1192,25 @@ void DrawToScreenWithColour(int xPos, int yPos, ConsoleColor colour, string char
 }
 
 void UpKeyEvent(HandlerContext* context) {
-    ConsoleSetForegroundColor(RED);
+    context->player->gun.crY -= context->player->setting->crosshairSpeed;
+    context->player->gun.crY = max(context->player->gun.crY, 2); // クロスヘアが画面外に出ないようにする
 }
 void DownKeyEvent(HandlerContext* context) {
-    ConsoleSetForegroundColor(YELLOW);
+    context->player->gun.crY += context->player->setting->crosshairSpeed;
+    context->player->gun.crY = min(context->player->gun.crY, (context->setting->sys.screenHeight - context->player->gun.crosshairAA.height)); // クロスヘアが画面外に出ないようにする
 }
 void LeftKeyEvent(HandlerContext* context) {
-    ConsoleSetForegroundColor(BLUE);
+    context->player->gun.crX -= context->player->setting->crosshairSpeed;
+    context->player->gun.crX = max(context->player->gun.crX, 2);
 }
 void RightKeyEvent(HandlerContext* context) {
-    ConsoleSetForegroundColor(GREEN);
+    context->player->gun.crX += context->player->setting->crosshairSpeed;
+    context->player->gun.crX = min(context->player->gun.crX, (context->setting->sys.screenWidth - context->player->gun.crosshairAA.width + 3));
 }
-void ShotEvent(HandlerContext* context) {
-    ConsoleSetForegroundColor(DEFAULT);
+void ShootEvent(HandlerContext* context) {
+    context->player->isShooting = true;
+}
+
+void SwitchGunEvent(HandlerContext* context) {
+    context->player->gun.type = (context->player->gun.type == LASER) ? RAILGUN : LASER; // 銃の切り替え
 }
