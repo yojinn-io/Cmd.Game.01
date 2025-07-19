@@ -4,6 +4,7 @@
 #include <conio.h>
 #include <windows.h>
 #include <math.h>
+#include <vector>
 
 #include <cwchar>
 #include <clocale>
@@ -17,12 +18,55 @@
 * conio.h キーボード
 */
 
+/*****************************
+todo list
+敵-普通
+- [ ] 敵の攻撃を実装する
+- [ ] 敵の弾を実装する
+- [ ] 敵の爆発を実装する
+- [ ] 敵の移動を実装する
+
+
+敵ーボス
+- [ ] ボス戦を発生する
+- [ ] ボスの攻撃を実装する
+- [ ] ボスのHPを実装する
+- [ ] ボスを実装する
+- [ ] ボスの弱点を実装する
+- [ ] ボスの弱点を攻撃して倒す
+- [ ] ボスの弱点を攻撃して倒したら、敵のボスの爆発アニメーションを実装する
+- [ ] ボスを倒したら、エンディングを表示する
+- [ ] ボスがざこと召喚する
+- [ ] ざこの攻撃を実装する
+- [ ] ざこの爆発を実装する
+
+Enviroment
+- [x] 地形を実装する
+- [x] Crosshairを実装する
+- [x] spaceshipを実装する
+- [x] UIを実装する
+- [x] UIのFPSを実装する
+- [ ] 秒読み、打ち上げ
+- [ ] 秒読み、死亡
+- [ ] 秒読みを実装する
+- [ ] 秒読みのUIを実装する
+- [ ] 秒読みのアニメーションを実装する
+- [x] 武器を実装する
+- [ ] 武器の弾を実装する
+- [ ] 敵のAttackするとき、画面反白を実装する
+- [ ] 敵撃っていたの判定
+
+*****************************/
+
 using namespace std;
 
 const int CONSOLE_WIDTH = 120;
 const int CONSOLE_HEIGHT = 30;
 const bool EMPTY_CHAR_SW = false;
 const int GUN_LENGTH = 5;
+const int PLAYER_HP = 9;
+const int PLAYER_AMMO = 7;
+
 
 const string author = "GC1B_10_ラ_ケツブン";
 
@@ -558,6 +602,7 @@ struct SystemSetting {
 struct SystemVariable {
     int frame = 0;
     int playerUiOffsetX = 19;
+
 };
 
 struct PlayerSetting {
@@ -565,75 +610,25 @@ struct PlayerSetting {
 };
 
 struct GameSetting {
-    SystemSetting sys;
-    PlayerSetting pr;
-    SystemVariable val;
+    SystemSetting sysSetting;
+    PlayerSetting playerSetting;
+    SystemVariable sysVal;
 };
 
 
 #pragma endregion
 
 #pragma region "CmdGameEngine"
-struct Point{
+struct Point {
     int x;
     int y;
 };
 
-struct EngineContext {
-    GameSetting setting;
-    bool running = true;
-    clock_t startTime;
-    clock_t endTime;
-    int fps;
-    double gameDelay;
-};
-
-EngineContext* CmdGameInitialize(string title, int width, int height) {  
-    // Allocate EngineContext on the heap instead of the stack  
-    EngineContext* ec = new EngineContext();  
-    ec->setting.sys.consoleWidth = width;  
-    ec->setting.sys.consoleHeight = height;  
-    ec->setting.sys.screenWidth = width - 1;  
-    ec->setting.sys.screenHeight = height;  
-    ec->setting.sys.spriteMaxWidth = ec->setting.sys.screenWidth - 2;  
-    ec->setting.sys.spriteMaxHeight = ec->setting.sys.screenHeight - 2;  
-    SetConsoleTitleA(title.c_str());  
-    return ec;  
-}
-
-bool CmdGameProcessMessage(EngineContext& ec) {
-    ec.setting.val.frame++;
-    return ec.running;
-}
-
-void CmdGameBeginFrame(EngineContext& ec) {
-    ec.startTime = clock();
-}
-
-void CmdGameEndFrame(EngineContext& ec) {
-    ec.endTime = clock();
-    ec.fps = (int)(ec.setting.val.frame / ((double)clock() / CLOCKS_PER_SEC));
-    double frameTime = (double)(ec.endTime - ec.startTime) * 1000 / CLOCKS_PER_SEC;
-    if (frameTime < ec.setting.sys.frameDurationMS) {
-        ec.gameDelay = ec.setting.sys.frameDurationMS - frameTime;
-        Sleep(ec.gameDelay);
-    }
-}
-
-void CmdGameFinalize(EngineContext& ec) {
-    
-}
-#pragma endregion
-
-/**************************************************/
-
-/********* Game *************/
-#pragma region "Object"
-//****************************Gun****************************//
-enum GunType {
+/****************************Gun****************************/
+typedef enum GunType {
     LASER = 0,
     RAILGUN = 1,
-};
+} GunType;
 
 static const string GUN_NAME[] = {
     "Laser Gun", "Railgun",
@@ -656,13 +651,6 @@ struct Gun {
     CrosshairAA crosshairAA; // クロスヘアのスプライト
     GunSetting setting; // 銃の設定
 };
-//****************************Player****************************//
-struct PlayerGUI {    // プレイヤーのGUI設定
-    Point hpPosi; // HP表示位置
-    Point scorePosi; // スコア表示位置
-    Point ammoPosi; // 弾薬表示位置
-    Point gunNamePosi; // 銃の位置
-};
 
 struct Player {
     PlayerSetting* setting;
@@ -674,11 +662,6 @@ struct Player {
     int ammo; // 弾薬数
 };
 
-struct HandlerContext {
-    Player* player;
-    GameSetting* setting; // ゲーム設定
-};
-//****************************UFO****************************//
 struct Enemy {
     Point position; // 敵の位置
     UFOenemyAA sprite; // UFOのスプライト
@@ -688,6 +671,93 @@ struct Enemy {
     bool isAlive = true; // 生存状態
     int moveSpeed = 1; // 移動速度
 };
+
+
+
+
+struct EngineContext {
+    Player player;
+    vector<Enemy> enemys;
+    //vector<Bullet> bullets;
+    GameSetting setting;
+    bool running = true;
+    clock_t startTime;
+    clock_t endTime;
+    int fps;
+    double gameDelay;
+};
+
+EngineContext* CmdGameInitialize(string title, int width, int height) {  
+    // Allocate EngineContext on the heap instead of the stack  
+    EngineContext* ec = new EngineContext();  
+    ec->setting.sysSetting.consoleWidth = width;  
+    ec->setting.sysSetting.consoleHeight = height;  
+    ec->setting.sysSetting.screenWidth = width - 1;  
+    ec->setting.sysSetting.screenHeight = height;  
+    ec->setting.sysSetting.spriteMaxWidth = ec->setting.sysSetting.screenWidth - 2;  
+    ec->setting.sysSetting.spriteMaxHeight = ec->setting.sysSetting.screenHeight - 2;  
+    SetConsoleTitleA(title.c_str());  
+    return ec;  
+}
+
+bool CmdGameProcessMessage(EngineContext& ec) {
+    ec.setting.sysVal.frame++;
+    return ec.running;
+}
+
+void CmdGameBeginFrame(EngineContext& ec) {
+    ec.startTime = clock();
+}
+
+void CmdGameEndFrame(EngineContext& ec) {
+    ec.endTime = clock();
+    ec.fps = (int)(ec.setting.sysVal.frame / ((double)clock() / CLOCKS_PER_SEC));
+    double frameTime = (double)(ec.endTime - ec.startTime) * 1000 / CLOCKS_PER_SEC;
+    if (frameTime < ec.setting.sysSetting.frameDurationMS) {
+        ec.gameDelay = ec.setting.sysSetting.frameDurationMS - frameTime;
+        Sleep((int)ec.gameDelay);
+    }
+}
+
+void CmdGameFinalize(EngineContext& ec) {
+    
+}
+#pragma endregion
+
+/**************************************************/
+
+/********************* Game ***********************/
+#pragma region "Object"
+
+
+
+
+//****************************Player****************************//
+struct PlayerGUI {    // プレイヤーのGUI設定
+    Point hpPosi; // HP表示位置
+    Point scorePosi; // スコア表示位置
+    Point ammoPosi; // 弾薬表示位置
+    Point gunNamePosi; // 銃の位置
+};
+
+
+
+struct HandlerContext {
+    Player* player;
+    GameSetting* setting; // ゲーム設定
+};
+
+//****************************Environment****************************//
+
+struct Environment {
+    SpaceshipAA spaceship;
+    CityAA city;
+    CarAA car;
+    string border;
+    string ground;
+};
+
+
 
 #pragma endregion
 
@@ -786,46 +856,11 @@ void RunKeyboardEvent(HandlerContext hc);
 
 #pragma endregion
 
-#pragma region "Action関数"
-
-Player* InitPlayer(EngineContext ec) {
-    Player* player = new Player();
-    player->hp = 9;
-    player->score = 0;
-    player->ammo = 7; // 初期弾薬数
-    player->gun.setting = {
-        {
-            ec.setting.sys.screenWidth / 2 - 1, // 左アンカーX位置
-            ec.setting.sys.screenHeight - 2     // 左アンカーY位置
-        },
-        {
-            ec.setting.sys.screenWidth / 2,     // 中央アンカーX位置
-            ec.setting.sys.screenHeight - 2     // 中央アンカーY位置
-        },
-        {
-            ec.setting.sys.screenWidth / 2 + 1, // 右アンカーX位置
-            ec.setting.sys.screenHeight - 2     // 右アンカーY位置
-        }
-    };
-    player->gun.crX = (int)ec.setting.sys.screenWidth / 2;
-    player->gun.crY = (int)ec.setting.sys.screenHeight / 3;
-    player->gun.type = LASER;
-    
-    player->setting = &ec.setting.pr; // PlayerSettingを設定
-    return player;
-}
-
-void GunAction(Player* player, EngineContext& ec);
-
-void ShootBulletAction(Player* player, EngineContext& ec);
-
-#pragma endregion
-
 #pragma region "描画関数"
 
-string SpritesEnviromentBorder(EngineContext ec);
+string SpritesEnvironmentBorder(EngineContext ec);
 
-string SpritesEnviromentGround(EngineContext ec);
+string SpritesEnvironmentGround(EngineContext ec);
 
 void WriteToBuffer(int xPos, int yPos, string characters, EngineContext& ec);
 
@@ -835,70 +870,82 @@ void WirteGunSprites(Player player, EngineContext& ec);
 
 void WirteGUI(Player player, EngineContext& ec);
 
-void DrawCrosshair(Player player, EngineContext ec);
+void DrawCrosshair(const Player* player, EngineContext ec);
 
 void DrawToScreen(EngineContext& ec);
 
 void DrawToScreenWithColour(int xPos, int yPos, ConsoleColor colour, string characters, EngineContext ec);
 
+void DrawScreenUI(Environment& env, EngineContext* ec, Player* player);
+
 #pragma endregion
 
-/*****************************/
-/*
-todo list
-敵-普通
-- [ ] 敵の攻撃を実装する
-- [ ] 敵の弾を実装する
-- [ ] 敵の爆発を実装する
+#pragma region "Action関数"
 
-敵ーボス
-- [ ] ボスの攻撃を実装する
-- [ ] ボスのHPを実装する
-- [ ] ボスを実装する
-- [ ] ボスの弱点を実装する
-- [ ] ボスの弱点を攻撃して倒す
-- [ ] ボスの弱点を攻撃して倒したら、敵のボスの爆発アニメーションを実装する
-- [ ] ボスを倒したら、エンディングを表示する
-- [ ] ボスがざこと召喚する
-- [ ] ざこの攻撃を実装する
-- [ ] ざこの爆発を実装する
+void InitPlayer(EngineContext& ec) {
+    ec.player.hp = PLAYER_HP;
+    ec.player.score = 0;
+    ec.player.ammo = PLAYER_AMMO; // 初期弾薬数
+    ec.player.gun.setting = {
+        {
+            ec.setting.sysSetting.screenWidth / 2 - 1, // 左アンカーX位置
+            ec.setting.sysSetting.screenHeight - 2     // 左アンカーY位置
+        },
+        {
+            ec.setting.sysSetting.screenWidth / 2,     // 中央アンカーX位置
+            ec.setting.sysSetting.screenHeight - 2     // 中央アンカーY位置
+        },
+        {
+            ec.setting.sysSetting.screenWidth / 2 + 1, // 右アンカーX位置
+            ec.setting.sysSetting.screenHeight - 2     // 右アンカーY位置
+        }
+    };
+    ec.player.gun.crX = (int)ec.setting.sysSetting.screenWidth / 2;
+    ec.player.gun.crY = (int)ec.setting.sysSetting.screenHeight / 3;
+    ec.player.gun.type = LASER;
 
-Enviroment
-- [ ] 地形を実装する
-- [ ] Crosshairを実装する
-- [ ] spaceshipを実装する
-- [ ] UIを実装する
-- [x] UIのFPSを実装する
-- [ ] 秒読みを実装する
-- [ ] 秒読みのUIを実装する
-- [ ] 秒読みのアニメーションを実装する
-- [ ] 武器を実装する
-- [ ] 武器の弾を実装する
-- [ ] 敵のAttackするとき、画面反白を実装する
-  
-*/
+    ec.player.setting = &ec.setting.playerSetting; // PlayerSettingを設定
+}
+
+Environment InitEnvGUI(EngineContext ec) {
+    Environment env;
+    env.border = SpritesEnvironmentBorder(ec);
+    env.ground = SpritesEnvironmentGround(ec);
+    return env;
+}
+
+vector<Enemy> InitEnemyV1(EngineContext ec) {
+    vector<Enemy> enemys = {};
+    return enemys;
+}
+
+void GunAction(Player* player, EngineContext& ec);
+
+void ShootBulletAction(Player* player, EngineContext& ec);
+
+
+
+#pragma endregion
+/**************************************************/
+
+
+
 
 int main() {
     EngineContext* ec = CmdGameInitialize(author, CONSOLE_WIDTH, CONSOLE_HEIGHT);
     ConsoleCursorVisible(false);
 
-    Player* player = InitPlayer(*ec);
+    InitPlayer(*ec);
     HandlerContext context;
-    context.player = player;
+    context.player = &ec->player;                       
     context.setting = &ec->setting;
 
-    SpaceshipAA spaceship;
-    CityAA city;
-    CarAA car;
-
-
+    Environment env = InitEnvGUI(*ec);
     
     RegisterKeyboardEvent(context);
     
     int countdown = 10;
 
-    int x = 10;
-    int y = 10;
     while (CmdGameProcessMessage(*ec)) {
         CmdGameBeginFrame(*ec);
 
@@ -908,12 +955,12 @@ int main() {
 
         // Actionを実行
 
-        int animeframe = ec->setting.val.frame % 20 / 5;
+        int animeframe = ec->setting.sysVal.frame % 20 / 5;
 
         if (countdown == 0) {
             countdown = 10;
         }
-        if (ec->setting.val.frame % ec->setting.sys.targetFPS == 0) {
+        if (ec->setting.sysVal.frame % ec->setting.sysSetting.targetFPS == 0) {
             countdown--;
         }
 
@@ -921,32 +968,17 @@ int main() {
         //DrawToScreenWithColour(10, 20, RED, to_string(ec.gameSetting.val.frame), ec);
         
         // UIを描画する
-        {
-            WriteToBuffer(0, 0, SpritesEnviromentBorder(*ec), *ec);
-            WriteToBuffer(1, ec->setting.sys.groundHeight, SpritesEnviromentGround(*ec), *ec);
-            WriteToBuffer(spaceship.width - spaceship.width / 2, ec->setting.sys.groundHeight - spaceship.height, spaceship.sprites, *ec);
-            WriteToBuffer(ec->setting.sys.screenWidth - (city.width + 1), ec->setting.sys.groundHeight - city.height, city.sprites, *ec);
-            WriteToBuffer(ec->setting.sys.screenWidth - (city.width + car.width + 4) , ec->setting.sys.groundHeight - car.height, car.sprites, *ec);
-        
-            WirteGunSprites(*player, *ec);
-            WirteGUI(*player, *ec);
-
-            WriteToBuffer(ec->setting.sys.screenWidth - ec->setting.val.playerUiOffsetX + 8, ec->setting.sys.groundHeight , GUN_NAME[player->gun.type], *ec);
-            WriteToBuffer(ec->setting.sys.screenWidth - ec->setting.val.playerUiOffsetX + 8, ec->setting.sys.groundHeight + 3, to_string(player->score), *ec);
-            DrawToScreen(*ec);
-
+        DrawScreenUI(env, ec, context.player);
             
-            
-        }
         // Actionを実行する
         {
-            GunAction(player, *ec);
-            ShootBulletAction(player, *ec);
+            GunAction(context.player, *ec);
+            ShootBulletAction(context.player, *ec);
         }
 
-        // Test
+        
         {   
-            
+            ///////////////////// Test
             UFOenemyAA ue;
             UFOBossAA ub;
             UFOBossSubAA ubs;
@@ -954,16 +986,18 @@ int main() {
             DrawToScreenWithColour(64, 8, RED, ub.sprites[animeframe], *ec);
             DrawToScreenWithColour(50, 6, GREEN, ue.leftSprites[animeframe], *ec);
             DrawToScreenWithColour(50, 12, YELLOW, ubs.sprites, *ec);
+            ////////////////////////////////
+
 
             // User Interfaceを描画する
-            int x = ec->setting.sys.screenWidth - ec->setting.val.playerUiOffsetX + 9;
-            int y = ec->setting.sys.groundHeight + 2;
-            DrawToScreenWithColour(x, y++, RED, "❚❚❚❚❚❚❚", *ec);
-            DrawToScreenWithColour(x, y++, MAGENTA, "❚❚❚❚❚❚❚", *ec);
+            // int x = ec->setting.sysSetting.screenWidth - ec->setting.sysVal.playerUiOffsetX + 9;
+            // int y = ec->setting.sysSetting.groundHeight + 2;
+            // DrawToScreenWithColour(x, y++, RED, "❚❚❚❚❚❚❚", *ec);
+            // DrawToScreenWithColour(x, y + 2, MAGENTA, "❚❚❚❚❚❚❚", *ec);
         }
         
         // Draw Crosshair
-        DrawCrosshair(*player, *ec);
+        DrawCrosshair(context.player, *ec);
         
         string title = author + " FPS:" + to_string(ec->fps);
         ConsoleTitle(title);
@@ -972,6 +1006,23 @@ int main() {
     }
     CmdGameFinalize(*ec);
     return 0;
+}
+
+void DrawScreenUI(Environment& env, EngineContext* ec, Player* player) {
+    WriteToBuffer(0, 0, env.border, *ec);
+    WriteToBuffer(1, ec->setting.sysSetting.groundHeight, env.ground, *ec);
+    WriteToBuffer(env.spaceship.width - env.spaceship.width / 2, ec->setting.sysSetting.groundHeight - env.spaceship.height, env.spaceship.sprites, *ec);
+    WriteToBuffer(ec->setting.sysSetting.screenWidth - (env.city.width + 1), ec->setting.sysSetting.groundHeight - env.city.height, env.city.sprites, *ec);
+    WriteToBuffer(ec->setting.sysSetting.screenWidth - (env.city.width + env.car.width + 4), ec->setting.sysSetting.groundHeight - env.car.height, env.car.sprites, *ec);
+
+    WirteGunSprites(*player, *ec);
+    WirteGUI(*player, *ec);
+
+    WriteToBuffer(ec->setting.sysSetting.screenWidth - ec->setting.sysVal.playerUiOffsetX + 8, ec->setting.sysSetting.groundHeight, GUN_NAME[player->gun.type], *ec);
+    WriteToBuffer(ec->setting.sysSetting.screenWidth - ec->setting.sysVal.playerUiOffsetX + 8, ec->setting.sysSetting.groundHeight + 1, JoinCopyStr(player->hp, "❚"), *ec);
+    WriteToBuffer(ec->setting.sysSetting.screenWidth - ec->setting.sysVal.playerUiOffsetX + 8, ec->setting.sysSetting.groundHeight + 2, JoinCopyStr(player->ammo, "❚"), *ec);
+    WriteToBuffer(ec->setting.sysSetting.screenWidth - ec->setting.sysVal.playerUiOffsetX + 8, ec->setting.sysSetting.groundHeight + 3, to_string(player->score), *ec);
+    DrawToScreen(*ec);
 }
 
 void RegisterKeyboardEvent(HandlerContext hc) {
@@ -993,7 +1044,6 @@ void RunKeyboardEvent(HandlerContext hc) {
 
 void ShootBulletAction(Player* player, EngineContext& ec) {
     if (player->isShooting && player->ammo > 0) {
-        
         player->ammo--;
     }
     player->isShooting = false; // 銃を撃った後は、撃っていない状態に戻す
@@ -1001,22 +1051,22 @@ void ShootBulletAction(Player* player, EngineContext& ec) {
 
 void GunAction(Player* player, EngineContext& ec) {
     double theta = atan2(player->gun.setting.middleAnchor.y - player->gun.crY, player->gun.setting.middleAnchor.x - player->gun.crX);
-    player->gun.setting.xGunOffset = -floor(cos(theta) * GUN_LENGTH); // 初期オフセット
-    player->gun.setting.yGunOffset = -floor(sin(theta) * GUN_LENGTH); // 初期オフセット
+    player->gun.setting.xGunOffset = -(int)floor(cos(theta) * GUN_LENGTH); // 初期オフセット
+    player->gun.setting.yGunOffset = -(int)floor(sin(theta) * GUN_LENGTH); // 初期オフセット
     player->gun.setting.gunTopOffset = {
         (int)(player->gun.setting.xGunOffset * player->gun.setting.gunXStretch),
         player->gun.setting.yGunOffset
     };
 }
 
-string SpritesEnviromentBorder(EngineContext ec) {
+string SpritesEnvironmentBorder(EngineContext ec) {
     // Allocate strings on the heap instead of the stack  
-    string* topBorder = new string("╔" + JoinCopyStr(ec.setting.sys.spriteMaxWidth, "═") + "╗" + string(1, NEWLINE));  
-    string* middleBorder = new string("║" + JoinCopyStr(ec.setting.sys.spriteMaxWidth, " ") + "║" + string(1, NEWLINE));  
-    string* bottomBorder = new string("╚" + JoinCopyStr(ec.setting.sys.spriteMaxWidth, "═") + "╝");  
+    string* topBorder = new string("╔" + JoinCopyStr(ec.setting.sysSetting.spriteMaxWidth, "═") + "╗" + string(1, NEWLINE));  
+    string* middleBorder = new string("║" + JoinCopyStr(ec.setting.sysSetting.spriteMaxWidth, " ") + "║" + string(1, NEWLINE));  
+    string* bottomBorder = new string("╚" + JoinCopyStr(ec.setting.sysSetting.spriteMaxWidth, "═") + "╝");  
 
     // Combine the strings into a single result  
-    string allBorder = *topBorder + JoinCopyStr(ec.setting.sys.spriteMaxHeight, *middleBorder) + *bottomBorder;  
+    string allBorder = *topBorder + JoinCopyStr(ec.setting.sysSetting.spriteMaxHeight, *middleBorder) + *bottomBorder;  
 
     // Free the allocated memory  
     delete topBorder;  
@@ -1026,10 +1076,10 @@ string SpritesEnviromentBorder(EngineContext ec) {
     return allBorder;  
 }
 
-string SpritesEnviromentGround(EngineContext ec) {
-    string* topGround = new string(JoinCopyStr(ec.setting.sys.spriteMaxWidth - ec.setting.val.playerUiOffsetX, "═") + string(1, NEWLINE));
-    string* middleGround = new string(JoinCopyStr(ec.setting.sys.spriteMaxWidth - ec.setting.val.playerUiOffsetX, "▂") + string(1, NEWLINE));
-    string* bottomGround = new string(JoinCopyStr(ec.setting.sys.spriteMaxWidth - ec.setting.val.playerUiOffsetX, "▇"));
+string SpritesEnvironmentGround(EngineContext ec) {
+    string* topGround = new string(JoinCopyStr(ec.setting.sysSetting.spriteMaxWidth - ec.setting.sysVal.playerUiOffsetX, "═") + string(1, NEWLINE));
+    string* middleGround = new string(JoinCopyStr(ec.setting.sysSetting.spriteMaxWidth - ec.setting.sysVal.playerUiOffsetX, "▂") + string(1, NEWLINE));
+    string* bottomGround = new string(JoinCopyStr(ec.setting.sysSetting.spriteMaxWidth - ec.setting.sysVal.playerUiOffsetX, "▇"));
     string allGround = *topGround + *middleGround + *middleGround  + *bottomGround;
 
     delete topGround;
@@ -1054,15 +1104,15 @@ void WirteGunSprites(Player player, EngineContext& ec) {
 
 
 void WirteGUI(Player player, EngineContext& ec) {
-    int x = ec.setting.sys.screenWidth - ec.setting.val.playerUiOffsetX - 1;
-    int y = ec.setting.sys.groundHeight - 1;
+    int x = ec.setting.sysSetting.screenWidth - ec.setting.sysVal.playerUiOffsetX - 1;
+    int y = ec.setting.sysSetting.groundHeight - 1;
 
-    string* topFrame =    new string("╔" + JoinCopyStr(ec.setting.val.playerUiOffsetX - 1, "═") + "╣" + string(1, NEWLINE));
+    string* topFrame =    new string("╔" + JoinCopyStr(ec.setting.sysVal.playerUiOffsetX - 1, "═") + "╣" + string(1, NEWLINE));
     string* gunFrame =    new string("║   Gun:           " + string(1, NEWLINE)); // 仮のHP
     string* hpFrame =     new string("║    HP:           " + string(1, NEWLINE)); // 仮のHP
     string* ammoFrame =   new string("║  Ammo:           " + string(1, NEWLINE));
     string* scoreFrame =  new string("║ Score:           " + string(1, NEWLINE));
-    string* bottomFrame = new string("╩" + JoinCopyStr(ec.setting.val.playerUiOffsetX - 1, "═") + "╝");
+    string* bottomFrame = new string("╩" + JoinCopyStr(ec.setting.sysVal.playerUiOffsetX - 1, "═") + "╝");
 
     string allFrames = *topFrame + *gunFrame + *hpFrame + *ammoFrame + *scoreFrame + *bottomFrame;
     WriteToBuffer(x, y, allFrames, ec);
@@ -1073,10 +1123,10 @@ void DrawCountdown(int countdown, EngineContext ec) {
     DrawToScreenWithColour(2, 2, RED, to_string(countdown), ec);
 }
 
-void DrawCrosshair(Player player, EngineContext ec) {
-    int x = player.gun.crX - player.gun.crosshairAA.height / 2;
-    int y = player.gun.crY - player.gun.crosshairAA.width / 2;
-    DrawToScreenWithColour(x, y, player.isShooting ? CYAN : BLUE, player.gun.crosshairAA.sprites[player.gun.type], ec);
+void DrawCrosshair(const Player* player, EngineContext ec) {
+    int x = player->gun.crX - player->gun.crosshairAA.height / 2;
+    int y = player->gun.crY - player->gun.crosshairAA.width / 2;
+    DrawToScreenWithColour(x, y, player->isShooting ? CYAN : BLUE, player->gun.crosshairAA.sprites[player->gun.type], ec);
 }
 
 void WriteLine(Point start, Point end, EngineContext& ec) {
@@ -1092,7 +1142,7 @@ void WriteLine(Point start, Point end, EngineContext& ec) {
         if (x == end.x && y == end.y) {
             return;
         }
-        float error2 = error * 2;
+        int error2 = error * 2;
         if (error2 >= dy) {
             if (x == end.x) {
                 break;
@@ -1111,27 +1161,27 @@ void WriteLine(Point start, Point end, EngineContext& ec) {
 }
 
 void DrawToScreen(EngineContext& ec) {
-    for (int y = 0; y < ec.setting.sys.screenHeight; y++) {
-        for (int x = 0; x < ec.setting.sys.screenWidth; x++) {
-            if (ec.setting.sys.screenBuffer[x][y] == string(1, NULL_CHAR)) {
-                ec.setting.sys.screenGraphic += (' ');
+    for (int y = 0; y < ec.setting.sysSetting.screenHeight; y++) {
+        for (int x = 0; x < ec.setting.sysSetting.screenWidth; x++) {
+            if (ec.setting.sysSetting.screenBuffer[x][y] == string(1, NULL_CHAR)) {
+                ec.setting.sysSetting.screenGraphic += (' ');
             } else {
-                ec.setting.sys.screenGraphic += ec.setting.sys.screenBuffer[x][y];
+                ec.setting.sysSetting.screenGraphic += ec.setting.sysSetting.screenBuffer[x][y];
             }
         }
-        if (y < ec.setting.sys.screenHeight - 1) {
-            ec.setting.sys.screenGraphic += string(1, NEWLINE);
+        if (y < ec.setting.sysSetting.screenHeight - 1) {
+            ec.setting.sysSetting.screenGraphic += string(1, NEWLINE);
         }
     }
     ConsoleSetCursorPosition(0, 0);
-    OutPrint(ec.setting.sys.screenGraphic);
+    OutPrint(ec.setting.sysSetting.screenGraphic);
 
     
     for (int i = 0; i < CONSOLE_WIDTH - 1; i++) {
-        ec.setting.sys.screenBuffer[i]->clear();
+        ec.setting.sysSetting.screenBuffer[i]->clear();
     }
     
-    ec.setting.sys.screenGraphic.clear(); // Clear the screen graphic buffer
+    ec.setting.sysSetting.screenGraphic.clear(); // Clear the screen graphic buffer
 }
 
 void WriteToBuffer(int xPos, int yPos, string characters, EngineContext& ec) {
@@ -1145,10 +1195,10 @@ void WriteToBuffer(int xPos, int yPos, string characters, EngineContext& ec) {
         if (charStr == string(1, NEWLINE)) {
             y++;
             x = xPos;
-        } else if (x < 0 || y < 0 || x >= ec.setting.sys.screenWidth || y >= ec.setting.sys.screenHeight) {
+        } else if (x < 0 || y < 0 || x >= ec.setting.sysSetting.screenWidth || y >= ec.setting.sysSetting.screenHeight) {
             x++;
         } else {
-            ec.setting.sys.screenBuffer[x][y] = charStr;
+            ec.setting.sysSetting.screenBuffer[x][y] = charStr;
             x++;
         }
     }
@@ -1176,8 +1226,8 @@ void DrawToScreenWithColour(int xPos, int yPos, ConsoleColor colour, string char
             continue;
         }
 
-        if (x >= 1 && x < ec.setting.sys.screenWidth - 1 &&
-            y >= 1 && y < ec.setting.sys.screenHeight - 1) {
+        if (x >= 1 && x < ec.setting.sysSetting.screenWidth - 1 &&
+            y >= 1 && y < ec.setting.sysSetting.screenHeight - 1) {
             if (EMPTY_CHAR_SW && charStr == string(1, EMPTY_CHAR)) {
                 ConsoleSetCursorPosition(x, y);
                 OutPrint(" ");
@@ -1197,7 +1247,7 @@ void UpKeyEvent(HandlerContext* context) {
 }
 void DownKeyEvent(HandlerContext* context) {
     context->player->gun.crY += context->player->setting->crosshairSpeed;
-    context->player->gun.crY = min(context->player->gun.crY, (context->setting->sys.screenHeight - context->player->gun.crosshairAA.height)); // クロスヘアが画面外に出ないようにする
+    context->player->gun.crY = min(context->player->gun.crY, (context->setting->sysSetting.screenHeight - context->player->gun.crosshairAA.height)); // クロスヘアが画面外に出ないようにする
 }
 void LeftKeyEvent(HandlerContext* context) {
     context->player->gun.crX -= context->player->setting->crosshairSpeed;
@@ -1205,7 +1255,7 @@ void LeftKeyEvent(HandlerContext* context) {
 }
 void RightKeyEvent(HandlerContext* context) {
     context->player->gun.crX += context->player->setting->crosshairSpeed;
-    context->player->gun.crX = min(context->player->gun.crX, (context->setting->sys.screenWidth - context->player->gun.crosshairAA.width + 3));
+    context->player->gun.crX = min(context->player->gun.crX, (context->setting->sysSetting.screenWidth - context->player->gun.crosshairAA.width + 3));
 }
 void ShootEvent(HandlerContext* context) {
     context->player->isShooting = true;
