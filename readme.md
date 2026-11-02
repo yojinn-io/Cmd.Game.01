@@ -39,3 +39,13 @@
 | 32  | 4   |
 | 40  | 0   |
 
+
+**ビルド方法**
+
+画面は120×30文字以上の端末で、UTF-8で表示してください。
+
+| 環境 | 方法 |
+| --- | --- |
+| Windows（Visual Studio） | `main.cpp` をプロジェクトに追加し、C/C++ の追加オプションに `/utf-8` を指定する |
+| Windows / macOS / Linux（CMake） | `cmake -B build` → `cmake --build build` |
+| macOS / Linux（直接） | `clang++ -std=c++17 -O2 main.cpp -o CmdGame` → `./CmdGame` |

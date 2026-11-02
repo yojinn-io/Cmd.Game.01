@@ -1,21 +1,27 @@
 ﻿#include <stdio.h>
 #include <string>
 #include <time.h>
-#include <conio.h>
-#include <windows.h>
 #include <math.h>
 #include <vector>
-
-#include <cwchar>
-#include <clocale>
-#include <codecvt>
 #include <algorithm>
+#include <chrono>
+#include <thread>
+
+#ifdef _WIN32
+#include <conio.h>
+#include <windows.h>
+#else
+#include <poll.h>
+#include <signal.h>
+#include <termios.h>
+#include <unistd.h>
+#endif
 
 
 /*
 * ANSI Escape Sequences 参考 =>  https://gist.github.com/fnky/458719343aabd01cfb17a3a4f7296797
 * Hexadecimal を使う
-* conio.h キーボード
+* conio.h キーボード（Windows）、termios キーボード（macOS / Linux）
 */
 
 /*****************************
@@ -134,9 +140,157 @@ enum ConsoleColor {
 };
 #pragma endregion
 
+#pragma region "Platform 関数「Windows / macOS / Linux」"
+// OSごとに違う処理はここだけに書く。ゲームとエンジンはここの関数だけを使う
+
+// 方向キーはOSごとに届き方が違うので、共通のコードに変換して返す
+const int PLATFORM_KEY_UP = 1000;
+const int PLATFORM_KEY_DOWN = 1001;
+const int PLATFORM_KEY_LEFT = 1002;
+const int PLATFORM_KEY_RIGHT = 1003;
+const int PLATFORM_KEY_NONE = -1;
+const int PLATFORM_KEY_ENTER = 13;
+const int PLATFORM_KEY_ESCAPE = 27;
+
+// 起動してからの時間（ミリ秒）
+long long PlatformNowMs() {
+    using namespace std::chrono;
+    return duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count();
+}
+
+void PlatformSleepMs(int ms) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(ms));
+}
+
+#ifdef _WIN32
+
+void PlatformSetup() {
+    // UTF-8で出力し、ANSI Escape Sequencesを有効にする
+    SetConsoleOutputCP(CP_UTF8);
+    HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
+    DWORD mode = 0;
+    if (GetConsoleMode(hOut, &mode)) {
+        SetConsoleMode(hOut, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
+    }
+}
+
+void PlatformRestore() {
+}
+
+bool PlatformKeyHit() {
+    return _kbhit() != 0;
+}
+
+int PlatformReadKey() {
+    int key = _getch();
+    // 方向キーは2バイトで届く（0 または 224 の後にキーのコード）
+    if (key == 0 || key == 224) {
+        switch (_getch()) {
+        case 72: return PLATFORM_KEY_UP;
+        case 80: return PLATFORM_KEY_DOWN;
+        case 75: return PLATFORM_KEY_LEFT;
+        case 77: return PLATFORM_KEY_RIGHT;
+        default: return PLATFORM_KEY_NONE;
+        }
+    }
+    return key;
+}
+
+void PlatformSetTitle(const string& title) {
+    SetConsoleTitleA(title.c_str());
+}
+
+void PlatformCursorVisible(bool flag) {
+    HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
+    CONSOLE_CURSOR_INFO info = { 100, flag };
+    SetConsoleCursorInfo(hOut, &info);
+}
+
+#else
+
+static termios originalTermios;
+static bool termiosChanged = false;
+
+void PlatformRestore() {
+    if (termiosChanged) {
+        tcsetattr(STDIN_FILENO, TCSANOW, &originalTermios);
+        termiosChanged = false;
+    }
+    fputs("\x1b[0m\x1b[?25h", stdout); // 色とカーソルを元に戻す
+    fflush(stdout);
+}
+
+// Ctrl+Cで終了しても、端末の設定を元に戻す
+void PlatformSignalHandler(int signalNumber) {
+    PlatformRestore();
+    _exit(128 + signalNumber);
+}
+
+void PlatformSetup() {
+    // 入力を1文字ずつ受け取り、押したキーを画面に表示しない
+    if (tcgetattr(STDIN_FILENO, &originalTermios) == 0) {
+        termios raw = originalTermios;
+        raw.c_lflag &= ~(ICANON | ECHO);
+        raw.c_cc[VMIN] = 0;
+        raw.c_cc[VTIME] = 0;
+        tcsetattr(STDIN_FILENO, TCSANOW, &raw);
+        termiosChanged = true;
+    }
+    atexit(PlatformRestore);
+    signal(SIGINT, PlatformSignalHandler);
+    signal(SIGTERM, PlatformSignalHandler);
+}
+
+bool PlatformWaitInput(int timeoutMs) {
+    pollfd fd = { STDIN_FILENO, POLLIN, 0 };
+    return poll(&fd, 1, timeoutMs) > 0 && (fd.revents & POLLIN);
+}
+
+bool PlatformKeyHit() {
+    return PlatformWaitInput(0);
+}
+
+int PlatformReadByte() {
+    unsigned char c;
+    return read(STDIN_FILENO, &c, 1) == 1 ? c : PLATFORM_KEY_NONE;
+}
+
+int PlatformReadKey() {
+    int key = PlatformReadByte();
+    if (key == '\n' || key == '\r') {
+        return PLATFORM_KEY_ENTER;
+    }
+    // 方向キーは ESC [ A のように届く。ESCだけならEscキー
+    if (key == PLATFORM_KEY_ESCAPE && PlatformWaitInput(10)) {
+        int next = PlatformReadByte();
+        if ((next == '[' || next == 'O') && PlatformWaitInput(10)) {
+            switch (PlatformReadByte()) {
+            case 'A': return PLATFORM_KEY_UP;
+            case 'B': return PLATFORM_KEY_DOWN;
+            case 'D': return PLATFORM_KEY_LEFT;
+            case 'C': return PLATFORM_KEY_RIGHT;
+            default: return PLATFORM_KEY_NONE;
+            }
+        }
+        return PLATFORM_KEY_NONE;
+    }
+    return key;
+}
+
+void PlatformSetTitle(const string& title) {
+    printf("\x1b]0;%s\x07", title.c_str());
+}
+
+void PlatformCursorVisible(bool flag) {
+    fputs(flag ? "\x1b[?25h" : "\x1b[?25l", stdout);
+}
+
+#endif
+#pragma endregion
+
 #pragma region "Console システム関数"
 void RunCmd(string cmd) {
-    printf(cmd.c_str());
+    fputs(cmd.c_str(), stdout);
 }
 
 void OutPrint(string str) {
@@ -148,9 +302,7 @@ void OutPrintln(string str) {
 }
 
 void ConsoleCursorVisible(bool flag) {
-    HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
-    CONSOLE_CURSOR_INFO info = { 100, flag };// カーソルを非表示にする
-    SetConsoleCursorInfo(hOut, &info);
+    PlatformCursorVisible(flag); // カーソルを非表示にする
 }
 
 void ConsoleSetCursorPosition(int x, int y) {
@@ -178,17 +330,11 @@ void ConsoleClear() {
 }
 
 void ConsoleSetup() {
-    // UTF-8で出力し、ANSI Escape Sequencesを有効にする
-    SetConsoleOutputCP(CP_UTF8);
-    HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
-    DWORD mode = 0;
-    if (GetConsoleMode(hOut, &mode)) {
-        SetConsoleMode(hOut, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
-    }
+    PlatformSetup();
 }
 
 void ConsoleTitle(string title) {
-    SetConsoleTitleA(title.c_str());
+    PlatformSetTitle(title);
 }
 
 #pragma endregion
@@ -791,7 +937,7 @@ struct GameState {
     GamePhase phase = PHASE_TITLE;
     double phaseTime = 0;     // フェーズ開始からの経過時間
     bool screenDrawn = false; // 静止画面を描画済みかどうか
-    ULONGLONG lastTick = 0;
+    long long lastTick = 0;
 
     // 準備フェーズ
     int spawnedCount = 0;
@@ -818,8 +964,9 @@ struct EngineContext {
     GameState game;
     GameSetting setting;
     bool running = true;
-    clock_t startTime;
-    clock_t endTime;
+    long long launchTime; // 起動した時刻（FPSの計算用）
+    long long startTime;
+    long long endTime;
     int fps;
     double gameDelay;
 };
@@ -833,16 +980,17 @@ EngineContext* CmdGameInitialize(string title, int width, int height) {
     ec->setting.sysSetting.screenHeight = height;  
     ec->setting.sysSetting.spriteMaxWidth = ec->setting.sysSetting.screenWidth - 2;  
     ec->setting.sysSetting.spriteMaxHeight = ec->setting.sysSetting.screenHeight - 2;  
-    SetConsoleTitleA(title.c_str());
+    ConsoleTitle(title);
     ConsoleSetup();
     srand((unsigned int)time(NULL));
-    ec->game.lastTick = GetTickCount64();
+    ec->launchTime = PlatformNowMs();
+    ec->game.lastTick = ec->launchTime;
     return ec;
 }
 
 // 前のフレームからの経過時間（秒）
 double CmdGameDeltaTime(EngineContext& ec) {
-    ULONGLONG now = GetTickCount64();
+    long long now = PlatformNowMs();
     double dt = (double)(now - ec.game.lastTick) / 1000.0;
     ec.game.lastTick = now;
     return min(dt, 0.1); // 止まっていた場合に一気に進まないようにする
@@ -854,16 +1002,18 @@ bool CmdGameProcessMessage(EngineContext& ec) {
 }
 
 void CmdGameBeginFrame(EngineContext& ec) {
-    ec.startTime = clock();
+    ec.startTime = PlatformNowMs();
 }
 
 void CmdGameEndFrame(EngineContext& ec) {
-    ec.endTime = clock();
-    ec.fps = (int)(ec.setting.sysVal.frame / ((double)clock() / CLOCKS_PER_SEC));
-    double frameTime = (double)(ec.endTime - ec.startTime) * 1000 / CLOCKS_PER_SEC;
+    // clock()はmacOS / LinuxではCPU時間になるので、実時間で計る
+    ec.endTime = PlatformNowMs();
+    double elapsed = max(1LL, ec.endTime - ec.launchTime) / 1000.0;
+    ec.fps = (int)(ec.setting.sysVal.frame / elapsed);
+    double frameTime = (double)(ec.endTime - ec.startTime);
     if (frameTime < ec.setting.sysSetting.frameDurationMS) {
         ec.gameDelay = ec.setting.sysSetting.frameDurationMS - frameTime;
-        Sleep((int)ec.gameDelay);
+        PlatformSleepMs((int)ec.gameDelay);
     }
 }
 
@@ -871,6 +1021,7 @@ void CmdGameFinalize(EngineContext& ec) {
     ConsoleResetColor();
     ConsoleClear();
     ConsoleCursorVisible(true);
+    PlatformRestore();
 }
 #pragma endregion
 
@@ -921,18 +1072,6 @@ string JoinCopyStr(int count, string str) {
     return result;
 }
 
-// 全角文字列の変換
-string ConvertStr(string str) {
-    wstring_convert<codecvt_utf8_utf16<wchar_t>> converterTo16;
-    wstring_convert<codecvt_utf8<wchar_t> > converterTo8;
-    wstring tmpStrTo16 = converterTo16.from_bytes(str);
-    string rStr = "";
-    for (int i = 0; i < tmpStrTo16.length(); i++) {
-        rStr += converterTo8.to_bytes(tmpStrTo16[i]);
-    }
-    return rStr;
-}
-
 int RandInt(int minValue, int maxValue) {
     if (maxValue <= minValue) {
         return minValue;
@@ -959,13 +1098,13 @@ enum AsciiCode {
     U_KEY = 117,      // uキー
     I_KEY = 105,      // iキー
     K_KEY = 107,      // kキー
-    UP_ARROW = 72,      // 上矢印キー
-    DOWN_ARROW = 80,    // 下矢印キー
-    LEFT_ARROW = 75,    // 左矢印キー
-    RIGHT_ARROW = 77,   // 右矢印キー
+    UP_ARROW = PLATFORM_KEY_UP,       // 上矢印キー
+    DOWN_ARROW = PLATFORM_KEY_DOWN,   // 下矢印キー
+    LEFT_ARROW = PLATFORM_KEY_LEFT,   // 左矢印キー
+    RIGHT_ARROW = PLATFORM_KEY_RIGHT, // 右矢印キー
     SPACE_BAR = 32,     // スペースキー
-    ESCAPE_KEY = 27,    // エスケープキー
-    ENTER_KEY = 13,     // Enterキー
+    ESCAPE_KEY = PLATFORM_KEY_ESCAPE, // エスケープキー
+    ENTER_KEY = PLATFORM_KEY_ENTER,   // Enterキー
 };
 
 enum GameEvent {
@@ -980,8 +1119,6 @@ enum GameEvent {
     QUIT = 8,
 };
 
-const int EXTENDED_KEY_PREFIX_1 = 0;   // 方向キーなどは2バイトで届く
-const int EXTENDED_KEY_PREFIX_2 = 224;
 
 const int MAX_EVENT = 15;
 
@@ -1111,7 +1248,7 @@ void ChangePhase(EngineContext& ec, GamePhase phase) {
 }
 
 void StartGame(EngineContext& ec) {
-    ULONGLONG lastTick = ec.game.lastTick;
+    long long lastTick = ec.game.lastTick;
     ec.game = GameState();
     ec.game.lastTick = lastTick;
     ec.enemys.clear();
@@ -1591,17 +1728,16 @@ void RegisterKeyboardEvent(HandlerContext hc) {
 
 void RunKeyboardEvent(HandlerContext hc) {
     // 溜まったキーを全部処理する（1フレーム1キーだと入力が遅れる）
-    while (_kbhit()) {
-        int key = _getch();
-        if (key == EXTENDED_KEY_PREFIX_1 || key == EXTENDED_KEY_PREFIX_2) {
-            // 方向キーはWASDと同じイベントにする
-            switch (_getch()) {
-            case UP_ARROW:    key = W_KEY; break;
-            case DOWN_ARROW:  key = S_KEY; break;
-            case LEFT_ARROW:  key = A_KEY; break;
-            case RIGHT_ARROW: key = D_KEY; break;
-            default: continue;
-            }
+    while (PlatformKeyHit()) {
+        int key = PlatformReadKey();
+        // 方向キーはWASDと同じイベントにする
+        switch (key) {
+        case UP_ARROW:    key = W_KEY; break;
+        case DOWN_ARROW:  key = S_KEY; break;
+        case LEFT_ARROW:  key = A_KEY; break;
+        case RIGHT_ARROW: key = D_KEY; break;
+        case PLATFORM_KEY_NONE: continue;
+        default: break;
         }
         RunEventHandler((char)tolower(key), hc);
     }

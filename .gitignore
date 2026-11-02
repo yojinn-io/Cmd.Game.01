@@ -423,3 +423,6 @@ FodyWeavers.xsd
 *.msix
 *.msm
 *.msp
+# CMake / macOS
+build/
+.DS_Store
