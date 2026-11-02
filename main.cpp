@@ -833,8 +833,11 @@ static const string GUN_NAME[] = {
     "Laser Gun", "Railgun",
 };
 
-// 命中時の弾薬補給（通常弾 +1、弾道兵器 +2）
-static const int GUN_AMMO_REFILL[] = { 1, 2 };
+// 命中時の効果
+// Laser  ：命中なら弾薬を消費せず+1補給、外れたら1発消費
+// Railgun：命中してもしなくても1発消費し、命中ならHPを回復
+const int LASER_AMMO_REFILL = 1;
+const int RAILGUN_HP_HEAL = 1;
 
 // 当たり判定の広さ（Laserは照準の周り1マスも当たる、Railgunは中心のみ）
 static const int GUN_HIT_MARGIN[] = { 1, 0 };
@@ -1496,8 +1499,12 @@ void DefeatBoss(EngineContext& ec) {
 // 照準の先にいる目標に当たったかどうか
 bool HitTarget(Player* player, EngineContext& ec) {
     GameState& game = ec.game;
-    int refill = GUN_AMMO_REFILL[player->gun.type];
-    string refillText = "+" + to_string(refill) + " AMMO";
+    string refillText;
+    if (player->gun.type == LASER) {
+        refillText = "+" + to_string(LASER_AMMO_REFILL) + " AMMO";
+    } else {
+        refillText = player->hp < PLAYER_HP ? "+" + to_string(RAILGUN_HP_HEAL) + " HP" : "HP MAX";
+    }
 
     if (game.phase == PHASE_BOSS && game.boss.isAlive) {
         Boss& boss = game.boss;
@@ -1743,7 +1750,7 @@ void RunKeyboardEvent(HandlerContext hc) {
     }
 }
 
-// 命中した場合のみ弾薬を消費せず、弾薬を回復する。外れたら1発消費する
+// Laserは命中で弾薬を回復、Railgunは命中でHPを回復する
 void ShootBulletAction(Player* player, EngineContext& ec) {
     if (!player->isShooting || ec.game.shotCooldown > 0) {
         return;
@@ -1753,11 +1760,17 @@ void ShootBulletAction(Player* player, EngineContext& ec) {
         return;
     }
     ec.game.shotCooldown = SHOT_COOLDOWN;
-    if (HitTarget(player, ec)) {
+    bool hit = HitTarget(player, ec);
+    if (hit) {
         player->hitCount++;
-        player->ammo = min(player->ammo + GUN_AMMO_REFILL[player->gun.type], PLAYER_AMMO_MAX);
+    }
+    if (player->gun.type == LASER) {
+        player->ammo = hit ? min(player->ammo + LASER_AMMO_REFILL, PLAYER_AMMO_MAX) : player->ammo - 1;
     } else {
         player->ammo--;
+        if (hit) {
+            player->hp = min(player->hp + RAILGUN_HP_HEAL, PLAYER_HP);
+        }
     }
 }
 
@@ -1963,10 +1976,10 @@ void DrawTitleScreen(EngineContext& ec) {
         "【操作方法】",
         "  W/A/S/D・方向キー : 照準の移動",
         "  J / SPACE          : 発射",
-        "  K                  : 武器の切替（Laser：当たり判定が広い ／ Railgun：命中時 弾薬+2）",
+        "  K                  : 武器の切替（Laser：当たり判定が広い ／ Railgun：命中時 HP回復）",
         "",
         "【ルール】",
-        "  命中すれば弾薬は減らず回復する（Laser +1 ／ Railgun +2）。外すと1発消費する。",
+        "  Laser：命中すれば弾薬は減らず+1、外すと1発消費。 Railgun：必ず1発消費し、命中すればHP+1。",
         "  準備フェーズ（60秒）：敵機40機が1.5秒ごとに出現し、3〜7秒後に攻撃してくる（-1HP）。",
         "  Bossフェーズ：弱点を撃つとBossの攻撃（-3HP）が遅れる。僕従は8秒後に攻撃してくる（-2HP）。",
         "  全機撃墜でBoss戦に僕従が出現しない。",
